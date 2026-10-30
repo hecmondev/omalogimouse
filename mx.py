@@ -86,6 +86,7 @@ def _closed_env() -> dict[str, str]:
         "DBUS_SESSION_BUS_ADDRESS",
         "LANG",
         "LC_ALL",
+        "OMARCHY_PATH",
     )
     env = {key: os.environ[key] for key in keep if key in os.environ}
     env["PATH"] = "/usr/bin:/bin"
@@ -98,6 +99,7 @@ class VerifiedExec:
     checked inode is the one that executes."""
 
     def __init__(self, abs_path: str, *, owner: int) -> None:
+        self.abs_path = abs_path
         self.fd = os.open(abs_path, os.O_RDONLY | os.O_NOFOLLOW)
         try:
             st = os.fstat(self.fd)
@@ -107,11 +109,16 @@ class VerifiedExec:
                 raise OSError(f"{abs_path} is group/other-writable")
             if not (st.st_mode & stat.S_IXUSR):
                 raise OSError(f"{abs_path} is not executable")
+            # Scripts such as omarchy locate their siblings from BASH_SOURCE,
+            # which resolves to /proc/self when run through the fd.
+            self.is_script = os.pread(self.fd, 2, 0) == b"#!"
         except OSError:
             os.close(self.fd)
             raise
 
     def argv(self, extra: list[str]) -> list[str]:
+        if self.is_script:
+            return [self.abs_path, *extra]
         return [f"/proc/self/fd/{self.fd}", *extra]
 
 
